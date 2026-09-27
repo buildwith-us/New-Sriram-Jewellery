@@ -44,6 +44,18 @@ const OrderSchema = new mongoose.Schema({
   // nothing and must not put anything back.
   stockReserved: { type: Boolean, default: false },
 
+  // Set by the stale-reservation sweeper when an unpaid card order times out.
+  // Distinguishes an abandoned checkout from the two deliberate cancellations:
+  // a customer cancel leaves orderStatus "cancelled" with no expiredAt, and an
+  // owner rejection sets approvalStatus REJECTED with rejectionReason.
+  expiredAt: { type: Date, default: null },
+  cancellationReason: { type: String, default: null },
+
+  // Payment captured for an order whose stock had already been released and
+  // could not be taken back — the shop has the customer's money and nothing to
+  // ship. Needs a human and a refund, so it is a flag rather than a status.
+  refundRequired: { type: Boolean, default: false },
+
   // Razorpay (PRD §4.1)
   razorpayOrderId: { type: String },
   razorpayPaymentId: { type: String },

@@ -6,6 +6,7 @@ import useCart from "../../hooks/useCart";
 import useAuthContext from "../../hooks/useAuthContext";
 import useAxiosSecure from "../../hooks/useAxiosSecure";
 import CustomHelmet from "../../components/CustomHelmet/CustomHelmet";
+import OrderSummary from "../../components/OrderSummary/OrderSummary";
 import toast from "react-hot-toast";
 
 // Payment Context to handle payment info
@@ -31,6 +32,22 @@ const Checkout = () => {
   const checkoutSubtotal = buyNowItem
     ? (buyNowItem.price || 0) * (buyNowItem.quantity || 1)
     : cartSubtotal?.subtotal || 0;
+
+  // GST portion of the total above. Prices already include GST, so this is tax
+  // taken back out, never added on. For the cart it is computed server-side —
+  // cart documents carry no gstPercent, so the client cannot derive it. The
+  // Buy Now item carries the rate from the product page, the one place it is
+  // known client-side.
+  const checkoutGst = buyNowItem
+    ? (() => {
+        const rate = Number(buyNowItem.gstPercent) || 0;
+        if (!rate) return null;
+        const line = (buyNowItem.price || 0) * (buyNowItem.quantity || 1);
+        return line - line / (1 + rate / 100);
+      })()
+    : cartSubtotal?.gstAmount !== undefined
+      ? Number(cartSubtotal.gstAmount)
+      : null;
 
   const handlePlaceOrder = () => {
     setIsPlacingOrder(true);
@@ -273,79 +290,43 @@ const Checkout = () => {
 
         {/* Right Side: Order Summary (40%) */}
         <aside className="w-full lg:w-[40%]">
-          <div className="lg:sticky lg:top-32 p-8 bg-surface-container border border-outline-variant/30 rounded-none fade-in">
-            <h3 className="font-display-lg text-headline-sm mb-8 text-primary border-b border-outline-variant/30 pb-4">Order Summary</h3>
-            
-            {/* Item List */}
-            <div className="space-y-6 mb-8 max-h-[400px] overflow-y-auto pr-2">
-              {checkoutItems?.map((item, idx) => (
-                // A "Buy Now" item is constructed client-side and has no _id,
-                // so fall back to the product id (then index) for a stable key.
-                <div key={item._id || item.productId || `item-${idx}`} className="flex items-center gap-4 group">
-                  <div className="w-20 h-20 bg-white border border-outline-variant/20 overflow-hidden flex-shrink-0">
-                    <img 
-                      src={item.img || item.image} 
-                      alt={item.name} 
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" 
-                    />
-                  </div>
-                  <div className="flex-grow">
-                    <p className="font-display-lg text-body-lg text-on-surface line-clamp-1">{item.name}</p>
-                    <p className="text-[12px] font-label-caps text-on-surface-variant mt-1">Qty: {item.quantity || 1}</p>
-                  </div>
-                  <p className="font-label-caps text-primary">₹{(item.price || item.discountPrice)?.toLocaleString("en-IN")}</p>
+          <OrderSummary
+            className="lg:sticky lg:top-32 rounded-none fade-in"
+            items={checkoutItems}
+            total={Number(checkoutSubtotal) || 0}
+            gstAmount={checkoutGst}
+            shipping="FREE"
+            rows={
+              paymentInfo
+                ? [{
+                    label: "Payment status",
+                    tone: "success",
+                    value: (
+                      <span className="font-bold inline-flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>
+                        PAID
+                      </span>
+                    ),
+                  }]
+                : []
+            }
+            footer={
+              <div className="mt-8 pt-8 border-t border-outline-variant/30 grid grid-cols-3 gap-4 text-center">
+                <div className="flex flex-col items-center gap-2 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[20px]">verified_user</span>
+                  <span className="text-[10px] font-label-caps tracking-widest">SECURE</span>
                 </div>
-              ))}
-              {(!checkoutItems || checkoutItems.length === 0) && (
-                <div className="text-center py-10 flex flex-col items-center">
-                  <span className="material-symbols-outlined text-4xl text-outline-variant mb-2">shopping_bag</span>
-                  <p className="font-body-base text-on-surface-variant">Your cart is empty</p>
+                <div className="flex flex-col items-center gap-2 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[20px]">local_shipping</span>
+                  <span className="text-[10px] font-label-caps tracking-widest">INSURED</span>
                 </div>
-              )}
-            </div>
-
-            {/* Totals */}
-            <div className="space-y-4 pt-8 border-t border-outline-variant/30">
-              <div className="flex justify-between items-center text-on-surface-variant font-label-caps text-[12px]">
-                <span>SUBTOTAL</span>
-                <span>₹{(checkoutSubtotal || 0).toLocaleString("en-IN")}</span>
-              </div>
-              <div className="flex justify-between items-center text-on-surface-variant font-label-caps text-[12px]">
-                <span>ESTIMATED SHIPPING</span>
-                <span className="text-secondary">FREE</span>
-              </div>
-              {paymentInfo && (
-                <div className="flex justify-between items-center text-on-surface-variant font-label-caps text-[12px]">
-                  <span>PAYMENT STATUS</span>
-                  <span className="text-success font-bold flex items-center gap-1">
-                    <span className="w-2 h-2 rounded-full bg-success animate-pulse"></span>
-                    PAID
-                  </span>
+                <div className="flex flex-col items-center gap-2 text-on-surface-variant">
+                  <span className="material-symbols-outlined text-[20px]">workspace_premium</span>
+                  <span className="text-[10px] font-label-caps tracking-widest">GUARANTEE</span>
                 </div>
-              )}
-              <div className="flex justify-between items-center pt-6 mt-4 border-t border-primary/20">
-                <span className="font-display-lg text-headline-sm text-primary">Total</span>
-                <span className="font-display-lg text-headline-sm text-primary">
-                  ₹{(checkoutSubtotal || 0).toLocaleString("en-IN")}
-                </span>
               </div>
-            </div>
-            
-            <div className="mt-8 pt-8 border-t border-outline-variant/30 grid grid-cols-3 gap-4 text-center">
-              <div className="flex flex-col items-center gap-2 text-on-surface-variant">
-                <span className="material-symbols-outlined text-[20px]">verified_user</span>
-                <span className="text-[10px] font-label-caps tracking-widest">SECURE</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 text-on-surface-variant">
-                <span className="material-symbols-outlined text-[20px]">local_shipping</span>
-                <span className="text-[10px] font-label-caps tracking-widest">INSURED</span>
-              </div>
-              <div className="flex flex-col items-center gap-2 text-on-surface-variant">
-                <span className="material-symbols-outlined text-[20px]">workspace_premium</span>
-                <span className="text-[10px] font-label-caps tracking-widest">GUARANTEE</span>
-              </div>
-            </div>
-          </div>
+            }
+          />
         </aside>
       </div>
     </main>

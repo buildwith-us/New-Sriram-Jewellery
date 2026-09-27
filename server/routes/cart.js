@@ -31,7 +31,11 @@ router.get("/", verifyJWT, async (req, res) => {
       
       return {
         ...item,
-        price: computedPrice // Override the old price with the new dynamically computed price
+        price: computedPrice, // Override the old price with the new dynamically computed price
+        // The rate already baked into `price`. Cart documents don't store it,
+        // so without this the checkout summary cannot itemise the GST the
+        // customer is being charged — it could only repeat the total twice.
+        gstPercent: product?.gstPercent ?? 0,
       };
     });
 
@@ -45,7 +49,9 @@ router.get("/", verifyJWT, async (req, res) => {
 router.get("/subtotal", verifyJWT, async (req, res) => {
   try {
     const userCart = await Cart.find({ userId: req.user.userId }).lean();
-    if (!userCart.length) return res.json({ subtotal: "0.00", totalItems: 0 });
+    if (!userCart.length) {
+      return res.json({ subtotal: "0.00", gstAmount: "0.00", subtotalExGst: "0.00", totalItems: 0 });
+    }
 
     const rateMap = await getRates();
     const productIds = userCart.map((item) => item.productId);
@@ -53,22 +59,38 @@ router.get("/subtotal", verifyJWT, async (req, res) => {
     const productMap = products.reduce((acc, p) => { acc[p.productId] = p; return acc; }, {});
 
     let subtotal = 0;
-    
+    let gstAmount = 0;
+
     for (const item of userCart) {
       const product = productMap[item.productId];
       let computedPrice = parseFloat(item.price || 0);
-      
+
       if (product) {
         const pricing = computePrice(product, rateMap);
         if (pricing && pricing.finalPrice) {
           computedPrice = pricing.finalPrice;
         }
       }
-      subtotal += computedPrice * (item.quantity || 1);
+      const quantity = item.quantity || 1;
+      subtotal += computedPrice * quantity;
+
+      // The computed price already includes GST, so the tax has to be taken
+      // back out of it rather than added on top. Same formula the order routes
+      // use, and it stays server-side for the same reason the price does: the
+      // cart document carries no gstPercent, so the client cannot derive this.
+      const gstPercent = product?.gstPercent || 0;
+      if (gstPercent > 0) {
+        const priceBeforeGst = computedPrice / (1 + gstPercent / 100);
+        gstAmount += (computedPrice - priceBeforeGst) * quantity;
+      }
     }
 
     res.json({
+      // Unchanged: the GST-inclusive amount the customer pays. Callers that
+      // only read `subtotal` keep working.
       subtotal: subtotal.toFixed(2),
+      gstAmount: gstAmount.toFixed(2),
+      subtotalExGst: (subtotal - gstAmount).toFixed(2),
       totalItems: userCart.length,
     });
   } catch (error) {

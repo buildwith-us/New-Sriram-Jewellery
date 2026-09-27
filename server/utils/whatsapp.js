@@ -108,6 +108,35 @@ export const sendOrderAlert = async ({ order, paymentMethod }) => {
 };
 
 /**
+ * Payment captured for an order that can no longer be fulfilled: the
+ * reservation expired and the stock went elsewhere in the meantime.
+ *
+ * The one automatic event here that warrants interrupting the owner. Routine
+ * expiries are logged and nothing more — abandoned checkouts are ordinary and
+ * frequent, and alerting on each would train the owner to ignore this channel,
+ * which would then cost them a real sale alert. This is the opposite case: the
+ * shop is holding a customer's money with nothing to ship.
+ */
+export const sendRefundRequiredAlert = async ({ order, product }) => {
+  const customer = order.name || "Customer";
+  const mobile =
+    order.shippingAddress?.mobileNumber || order.shippingAddress?.number || order.phone || "—";
+
+  return dispatch(
+    `🚨 REFUND NEEDED — ${order.orderId}\n\n` +
+      `${customer}\n` +
+      `${mobile}\n\n` +
+      `Payment of ${formatAmount(order.totalAmount)} arrived after the reservation ` +
+      `expired, and ${product} had already sold out.\n\n` +
+      `The money is with us and there is nothing to ship. Please refund this customer.\n\n` +
+      `${ADMIN_BASE_URL}/dashboard/adminOrders`,
+    `REFUND NEEDED for ${order.orderId} — ${customer} (${mobile}) paid ${formatAmount(
+      order.totalAmount
+    )} but ${product} is out of stock`
+  );
+};
+
+/**
  * Approval decision, so the owner keeps a record of what they approved and
  * the delivery date it committed them to.
  */

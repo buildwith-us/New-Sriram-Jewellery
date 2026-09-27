@@ -16,6 +16,7 @@ import paymentRouter from "./routes/payment.js";
 import adminDashboardRouter from "./routes/adminDashboard.js";
 import contactRouter from "./routes/contact.js";
 import newsletterRouter from "./routes/newsletter.js";
+import cronRouter from "./routes/cron.js";
 import connectDB from "./db/connect.js";
 import { apiLimiter, authLimiter } from "./middleware/rateLimit.js";
 
@@ -107,6 +108,8 @@ app.use("/api/payment", paymentRouter);
 app.use("/api/admin-dashboard", adminDashboardRouter);
 app.use("/api/contact", contactRouter);
 app.use("/api/newsletter", newsletterRouter);
+// Scheduled maintenance — authenticated by CRON_SECRET, not by a user session.
+app.use("/api/cron", cronRouter);
 
 // Legacy gold-rate route (backward compat — also served at /api/rates)
 // Removed dead /api/gold-rate mounts

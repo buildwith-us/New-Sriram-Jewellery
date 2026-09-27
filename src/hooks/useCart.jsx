@@ -25,12 +25,23 @@ const useCart = () => {
 
   const isCartLoading = isAuthLoading || (hasValidQuery && isQueryLoading);
 
-  // calculate subtotal amount of cart directly from cartData
-  const cartSubtotal = {
-    subtotal: cartData?.reduce((total, item) => {
-      return total + ((item.price || item.discountPrice || 0) * (item.quantity || 1));
-    }, 0) || 0
-  };
+  // Totals derived from cartData, whose prices the server already recomputed
+  // from the live metal rate on read — so this sums current prices, not the
+  // ones captured when each item was added.
+  //
+  // gstAmount is the tax *inside* that total, not an addition to it: every
+  // price computePrice returns is GST-inclusive, so the tax is taken back out
+  // per line using the rate the server sends alongside it.
+  const cartSubtotal = cartData?.reduce(
+    (acc, item) => {
+      const line = (item.price || item.discountPrice || 0) * (item.quantity || 1);
+      const rate = Number(item.gstPercent) || 0;
+      acc.subtotal += line;
+      acc.gstAmount += rate > 0 ? line - line / (1 + rate / 100) : 0;
+      return acc;
+    },
+    { subtotal: 0, gstAmount: 0 }
+  ) || { subtotal: 0, gstAmount: 0 };
 
   // post product data to cart
   const addToCart = async (productData, quantity = 1) => {

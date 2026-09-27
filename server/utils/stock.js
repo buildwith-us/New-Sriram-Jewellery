@@ -1,4 +1,17 @@
 import { Product } from "../models/Product.js";
+import { Order } from "../models/Order.js";
+
+/**
+ * How long an unpaid card order may hold its stock before the sweeper takes it
+ * back. Razorpay checkout sessions do not stay open indefinitely, so 30 minutes
+ * comfortably covers a payment genuinely in progress without holding a piece
+ * hostage for hours after the customer walked away.
+ *
+ * Tunable without a redeploy — the shop may want it shorter during a rush.
+ */
+export const STOCK_RELEASE_MINUTES = Number(process.env.STOCK_RELEASE_MINUTES) || 30;
+
+export const EXPIRY_REASON = "Payment was not completed in time — reservation released automatically.";
 
 /**
  * Stock reservation for orders.
@@ -90,6 +103,79 @@ export const releaseStock = async (items) => {
       $inc: { stock: item.quantity || 1 },
     });
   }
+};
+
+/**
+ * Release stock held by card orders that were created but never paid for.
+ *
+ * Closes the gap left by reserving at order creation: a customer who reaches
+ * the Razorpay screen and closes it leaves a reservation behind that nothing
+ * else clears. Cancellation and rejection are both deliberate acts; this is the
+ * case where nobody acts at all.
+ *
+ * COD is deliberately never swept. An unpaid COD order is not an abandoned
+ * checkout — it is a real commitment that is *supposed* to sit unpaid until
+ * delivery. Two independent guards keep it out: paymentStatus "pending" is the
+ * online-payment state (COD writes "unpaid"), and paymentMethod is excluded
+ * explicitly as well.
+ *
+ * Each order is claimed with a conditional update before its stock goes back.
+ * Claiming first means a crash mid-sweep leaks a reservation, which someone can
+ * see and fix; releasing first would risk restocking the same order twice and
+ * overselling — the failure that actually costs a customer their piece.
+ */
+export const releaseStaleReservations = async ({ windowMinutes, now = Date.now() } = {}) => {
+  const minutes = Number(windowMinutes) || STOCK_RELEASE_MINUTES;
+  const cutoff = new Date(now - minutes * 60 * 1000);
+
+  const stale = await Order.find({
+    stockReserved: true,
+    paidAt: null,
+    paymentStatus: "pending",
+    paymentMethod: { $ne: "cod" },
+    createdAt: { $lt: cutoff },
+  })
+    .select("_id orderId items totalAmount createdAt")
+    .lean();
+
+  const released = [];
+
+  for (const order of stale) {
+    // Claim it. If a webhook confirmed the payment a moment ago, or another
+    // sweep already took it, this matches nothing and we leave it alone.
+    const claimed = await Order.findOneAndUpdate(
+      { _id: order._id, stockReserved: true, paidAt: null },
+      {
+        stockReserved: false,
+        orderStatus: "expired",
+        paymentStatus: "expired",
+        expiredAt: new Date(now),
+        cancellationReason: EXPIRY_REASON,
+      },
+      { new: true }
+    );
+
+    if (!claimed) continue;
+
+    await releaseStock(order.items);
+
+    const ageMinutes = Math.round((now - new Date(order.createdAt).getTime()) / 60000);
+    // Structured enough to grep. Repeated abandonment of one product is worth
+    // noticing — it can mean a broken checkout rather than ordinary drop-off.
+    console.log(
+      `🧹 Reservation expired: ${order.orderId} (${ageMinutes}m old, ` +
+        `₹${Number(order.totalAmount || 0).toLocaleString("en-IN")}) — restocked ` +
+        order.items.map((i) => `${i.productId}×${i.quantity || 1}`).join(", ")
+    );
+
+    released.push({
+      orderId: order.orderId,
+      ageMinutes,
+      items: order.items.map((i) => ({ productId: i.productId, quantity: i.quantity || 1 })),
+    });
+  }
+
+  return { scanned: stale.length, released, windowMinutes: minutes };
 };
 
 /**

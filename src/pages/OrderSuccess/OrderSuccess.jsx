@@ -7,6 +7,7 @@ import useUserInfo from "../../hooks/useUserInfo";
 import useAxiosSecure from "../../hooks/useAxiosSecure";
 import { optimizeCloudinaryUrl } from "../../utils/cloudinaryImage";
 import InvoiceDocument from "../../components/InvoiceDocument/InvoiceDocument";
+import OrderSummary from "../../components/OrderSummary/OrderSummary";
 
 const OrderSuccess = () => {
   const location = useLocation();
@@ -137,25 +138,26 @@ const OrderSuccess = () => {
                     <span className="material-symbols-outlined text-[18px]">receipt_long</span>
                     PAYMENT SUMMARY
                   </h2>
-                  <div className="flex flex-col gap-3 font-body-base text-on-surface-variant text-sm">
-                    <div className="flex justify-between">
-                      <span>Total</span>
-                      <span>₹{orderObj?.totalAmount?.toLocaleString("en-IN")}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Shipping</span>
-                      <span className="italic text-secondary">Complimentary</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Method</span>
-                      <span className="capitalize">{orderObj?.paymentMethod === 'cod' ? 'Cash on Delivery' : 'Card'}</span>
-                    </div>
-                    <div className="w-full h-[1px] bg-outline-variant/30 my-2"></div>
-                    <div className="flex justify-between items-center font-button-text text-primary text-[16px]">
-                      <span>TOTAL PAID</span>
-                      <span>₹{orderObj?.totalAmount?.toLocaleString("en-IN")}</span>
-                    </div>
-                  </div>
+                  {/* The same totals block checkout uses, so the figures a
+                      customer approved are the figures they see afterwards.
+                      GST comes straight off the order — it was stored at
+                      creation but never shown. */}
+                  <OrderSummary
+                    className="!p-0 !bg-transparent !border-0"
+                    title=""
+                    total={orderObj?.totalAmount || 0}
+                    gstAmount={
+                      typeof orderObj?.gstAmount === "number" ? orderObj.gstAmount : null
+                    }
+                    shipping="Complimentary"
+                    rows={[
+                      {
+                        label: "Method",
+                        value: orderObj?.paymentMethod === "cod" ? "Cash on Delivery" : "Card",
+                      },
+                    ]}
+                    totalLabel="Total paid"
+                  />
                 </div>
               </div>
             </div>

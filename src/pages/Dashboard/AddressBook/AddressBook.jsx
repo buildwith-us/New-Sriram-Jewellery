@@ -11,6 +11,17 @@ const COUNTRY_NAME = "India";
 const PHONE_CODE = "91";
 const PHONE_NUMBER_LENGTH = 10;
 
+// Where most customers are, so a new address starts here instead of on whatever
+// happens to sort first (Andaman and Nicobar Islands). A default only — the
+// dropdown stays fully editable for everyone else.
+//
+// NOTE for the planned country-state-city removal: these two constants and the
+// blank-form guard below are the whole of this behaviour. A static India-only
+// state/city dataset only needs to keep exposing an `isoCode` of "TN" for it to
+// carry over unchanged; nothing here depends on the library itself.
+const DEFAULT_STATE_CODE = "TN";
+const DEFAULT_STATE_NAME = "Tamil Nadu";
+
 const AddressBook = () => {
   const {
     register,
@@ -45,10 +56,17 @@ const AddressBook = () => {
   }, []);
 
   useEffect(() => {
-    if (stateData.length > 0) {
-      setStateCode(stateData[0]?.isoCode);
-    }
-  }, [stateData]);
+    if (!stateData.length) return;
+
+    // Only seed a default into a genuinely blank form. An address being edited
+    // carries its own state, applied by the prefill effect below — seeding here
+    // first would briefly show the wrong state, and would win outright if the
+    // saved one ever failed to match.
+    if (shippingAdd) return;
+
+    const hasDefault = stateData.some((s) => s.isoCode === DEFAULT_STATE_CODE);
+    setStateCode(hasDefault ? DEFAULT_STATE_CODE : stateData[0]?.isoCode);
+  }, [stateData, shippingAdd]);
 
   useEffect(() => {
     if (stateCode) {
@@ -274,7 +292,14 @@ const AddressBook = () => {
                   className="w-full bg-transparent border-0 border-b border-outline-variant py-3 px-0 focus:ring-0 text-on-surface transition-colors outline-none focus:border-primary font-body-base"
                   {...register("state", { required: true })}
                   value={stateCode}
-                  onChange={(e) => setStateCode(e.target.value)}
+                  onChange={(e) => {
+                    setStateCode(e.target.value);
+                    // The previously chosen city belongs to the old state, so
+                    // drop it rather than carry a mismatched pair into the
+                    // order. Cleared here, on a deliberate change, rather than
+                    // in an effect that would race the saved-address restore.
+                    setValue("city", "");
+                  }}
                 >
                   {stateData?.map((state) => (
                     <option key={state.isoCode} value={state.isoCode}>
@@ -291,7 +316,14 @@ const AddressBook = () => {
                 <select
                   className="w-full bg-transparent border-0 border-b border-outline-variant py-3 px-0 focus:ring-0 text-on-surface transition-colors outline-none focus:border-primary font-body-base"
                   {...register("city", { required: true })}
+                  defaultValue=""
                 >
+                  {/* There is no sensible default city, so the form opens with
+                      none chosen rather than silently selecting whichever sorts
+                      first. `required` then makes the customer pick one. */}
+                  <option value="" disabled>
+                    Select a city
+                  </option>
                   {cityData?.map((city) => (
                     <option key={city.name} value={city.name}>
                       {city.name}

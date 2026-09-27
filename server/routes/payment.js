@@ -4,7 +4,7 @@ import { Order } from "../models/Order.js";
 import { Product } from "../models/Product.js";
 import { computePrice } from "../utils/computePrice.js";
 import { verifyJWT } from "../middleware/auth.js";
-import { sendOrderAlert } from "../utils/whatsapp.js";
+import { sendOrderAlert, sendRefundRequiredAlert } from "../utils/whatsapp.js";
 import { getRates, getRateStatus, findStaleMetalsForProducts } from "../utils/getRates.js";
 import { reserveStock, releaseStock, outOfStockMessage } from "../utils/stock.js";
 import dotenv from "dotenv";
@@ -208,6 +208,14 @@ const confirmPayment = async ({ razorpayOrderId, razorpayPaymentId, source }) =>
   );
 
   if (order) {
+    // A payment can land after the sweeper already gave this order's stock
+    // back — a delayed webhook against a checkout that looked abandoned. The
+    // customer has paid, so the question is only whether we can still supply
+    // the pieces. Take them again if they are there; escalate if they are not.
+    if (order.expiredAt && !order.stockReserved) {
+      return reclaimForLatePayment({ order, source });
+    }
+
     console.log(`💰 Payment confirmed for ${order.orderId} via ${source}.`);
     // Only a confirmed payment is worth waking the owner for, and only once.
     sendOrderAlert({ order, paymentMethod: "razorpay" }).catch((err) =>
@@ -219,6 +227,70 @@ const confirmPayment = async ({ razorpayOrderId, razorpayPaymentId, source }) =>
   // Either already confirmed by the other path, or no such order.
   const existing = await Order.findOne({ razorpayOrderId });
   return { order: existing, alreadyConfirmed: Boolean(existing) };
+};
+
+/**
+ * Payment captured for an order the sweeper had already expired.
+ *
+ * We re-attempt the reservation rather than refusing outright. The customer has
+ * paid; in the common case the pieces are still on the shelf — nobody bought
+ * them in the interim — and refusing would mean refunding an order we could
+ * simply fulfil. Refusing every late payment would turn an ordinary delayed
+ * webhook into a guaranteed refund and a lost sale.
+ *
+ * When the stock really is gone, we cannot ship, and no amount of retrying
+ * changes that. Then the order is flagged for refund and the owner is told
+ * immediately — this is the one case here that costs real money and needs a
+ * person the same day.
+ */
+const reclaimForLatePayment = async ({ order, source }) => {
+  const reservation = await reserveStock(order.items);
+
+  if (reservation.ok) {
+    const revived = await Order.findByIdAndUpdate(
+      order._id,
+      {
+        stockReserved: true,
+        orderStatus: "processing",
+        expiredAt: null,
+        cancellationReason: null,
+      },
+      { new: true }
+    );
+    console.log(
+      `💰 Payment confirmed for ${order.orderId} via ${source} — arrived after expiry, ` +
+        `stock was still available and has been re-reserved.`
+    );
+    sendOrderAlert({ order: revived, paymentMethod: "razorpay" }).catch((err) =>
+      console.error("Owner order alert failed (non-critical):", err.message)
+    );
+    return { order: revived, alreadyConfirmed: false, reclaimed: true };
+  }
+
+  const flagged = await Order.findByIdAndUpdate(
+    order._id,
+    {
+      refundRequired: true,
+      orderStatus: "expired",
+      cancellationReason:
+        `Paid after the reservation expired, and ${reservation.product} was no longer ` +
+        `available. This payment needs to be refunded.`,
+    },
+    { new: true }
+  );
+
+  console.error(
+    `🚨 REFUND REQUIRED — ${order.orderId}: payment captured via ${source} after expiry, ` +
+      `but ${reservation.product} is out of stock. Money taken with nothing to ship.`
+  );
+
+  // Unlike a routine expiry, this one wakes the owner. It is money held against
+  // an order that cannot be fulfilled.
+  sendRefundRequiredAlert({ order: flagged, product: reservation.product }).catch((err) =>
+    console.error("Refund alert failed (non-critical):", err.message)
+  );
+
+  return { order: flagged, alreadyConfirmed: false, refundRequired: true };
 };
 
 // POST /api/payment/verify — verify Razorpay payment signature

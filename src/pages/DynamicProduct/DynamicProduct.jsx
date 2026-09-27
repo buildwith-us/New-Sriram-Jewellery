@@ -117,6 +117,10 @@ const DynamicProduct = () => {
           image: dynamicProduct.image,
           category: dynamicProduct.category,
           price: dynamicProduct.discountPrice || dynamicProduct.price,
+          // Carried through so checkout can show the GST already inside that
+          // price. Nothing is billed from it — the server recomputes every
+          // figure on the order — it exists so the summary can itemise.
+          gstPercent: dynamicProduct.gstPercent,
           quantity,
         },
       },
